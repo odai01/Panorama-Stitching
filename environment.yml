@@ -1,0 +1,13 @@
+
+name: cv_ex1
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - numpy=1.26
+  - scipy
+  - matplotlib
+  - pillow
+  - opencv
