@@ -74,9 +74,21 @@ class Solution:
         Returns:
             The forward homography of the source image to its destination.
         """
-        # return new_image
-        """INSERT YOUR CODE HERE"""
-        pass
+        # The pixel at (row, col) is the point x = (col, row, 1)^T. It is
+        # sent to Hx, divided by the third coordinate and rounded to the
+        # nearest pixel. Pixels that land outside the destination are dropped.
+        new_image = np.zeros(dst_image_shape, dtype=src_image.dtype)
+        dst_rows, dst_cols = dst_image_shape[:2]
+        for row in range(src_image.shape[0]):
+            for col in range(src_image.shape[1]):
+                u, v, w = homography @ np.array([col, row, 1.0])
+                if w == 0:
+                    continue  # mapped to infinity
+                dst_col = int(np.round(u / w))
+                dst_row = int(np.round(v / w))
+                if 0 <= dst_row < dst_rows and 0 <= dst_col < dst_cols:
+                    new_image[dst_row, dst_col] = src_image[row, col]
+        return new_image
 
     @staticmethod
     def compute_forward_homography_fast(
@@ -105,9 +117,30 @@ class Solution:
         Returns:
             The forward homography of the source image to its destination.
         """
-        # return new_image
-        """INSERT YOUR CODE HERE"""
-        pass
+        src_rows, src_cols = src_image.shape[:2]
+        dst_rows, dst_cols = dst_image_shape[:2]
+        # (1) A meshgrid of the source columns and rows (row-major order).
+        cols, rows = np.meshgrid(np.arange(src_cols), np.arange(src_rows))
+        cols, rows = cols.ravel(), rows.ravel()
+        # (2) All pixel locations as a 3x(H*W) matrix of homogeneous points.
+        src_points = np.vstack((cols, rows, np.ones(cols.size)))
+        # (3) One matrix multiplication, then division by the third
+        # coordinate. Points mapped to infinity give inf/NaN and are dropped
+        # by the bounds check below.
+        dst_points = homography @ src_points
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dst_x = np.round(dst_points[0] / dst_points[2])
+            dst_y = np.round(dst_points[1] / dst_points[2])
+            # (4) Integer pixel locations, clipped to the destination image:
+            # points that land outside it are dropped.
+            inside = ((dst_x >= 0) & (dst_x < dst_cols) &
+                      (dst_y >= 0) & (dst_y < dst_rows))
+        dst_x = dst_x[inside].astype(int)
+        dst_y = dst_y[inside].astype(int)
+        # (5) Plant the source pixels at their destination locations.
+        new_image = np.zeros(dst_image_shape, dtype=src_image.dtype)
+        new_image[dst_y, dst_x] = src_image[rows[inside], cols[inside]]
+        return new_image
 
     @staticmethod
     def test_homography(homography: np.ndarray,
