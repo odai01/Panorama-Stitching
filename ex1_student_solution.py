@@ -31,9 +31,25 @@ class Solution:
         Returns:
             Homography from source to destination, 3x3 numpy array.
         """
-        # return homography
-        """INSERT YOUR CODE HERE"""
-        pass
+        # Class notation: src point x = (u, v, 1)^T, dst point (u', v', 1)^T.
+        # Each match adds two rows to A: [-x^T, 0^T, u'x^T] and
+        # [0^T, -x^T, v'x^T], and h = (H1, H2, H3)^T solves A h = 0.
+        src = np.asarray(match_p_src, dtype=float)
+        dst = np.asarray(match_p_dst, dtype=float)
+        num_points = src.shape[1]
+        x = np.vstack((src, np.ones(num_points))).T  # row i is x_i^T
+        zeros = np.zeros_like(x)
+        u_dst = dst[0, :, np.newaxis]
+        v_dst = dst[1, :, np.newaxis]
+        a = np.empty((2 * num_points, 9))
+        a[0::2] = np.hstack((-x, zeros, u_dst * x))
+        a[1::2] = np.hstack((zeros, -x, v_dst * x))
+        # With ||h|| = 1, ||A h|| is smallest for the eigenvector of A^T A
+        # with the smallest eigenvalue, i.e. the last row of V^T in the SVD.
+        # full_matrices=True keeps that row even for 4 matches (A is 8x9).
+        _, _, v_t = svd(a, full_matrices=True)
+        homography = v_t[-1].reshape(3, 3)
+        return homography
 
     @staticmethod
     def compute_forward_homography_slow(
