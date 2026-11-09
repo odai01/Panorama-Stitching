@@ -167,9 +167,40 @@ class Solution:
             inliers). In edge case where the number of inliers is zero,
             return dist_mse = 10 ** 9.
         """
-        # return fit_percent, dist_mse
-        """INSERT YOUR CODE HERE"""
-        pass
+        distances = Solution._compute_distances(homography, match_p_src,
+                                                match_p_dst)
+        # As in class, a point is an inlier when its distance is below max_err.
+        inliers = distances < max_err
+        fit_percent = np.mean(inliers)
+        if not np.any(inliers):
+            return fit_percent, 10 ** 9
+        dist_mse = np.mean(distances[inliers] ** 2)
+        return fit_percent, dist_mse
+
+    @staticmethod
+    def _compute_distances(homography: np.ndarray,
+                           match_p_src: np.ndarray,
+                           match_p_dst: np.ndarray) -> np.ndarray:
+        """Compute the distance from each mapped src point to its dst point.
+
+        Used by test_homography and meet_the_model_points.
+
+        Args:
+            homography: 3x3 Projective Homography matrix.
+            match_p_src: 2xN points from the source image.
+            match_p_dst: 2xN points from the destination image.
+
+        Returns:
+            N distances in pixels. Each src point is mapped with the
+            homography in homogeneous coordinates and divided by the third
+            coordinate. A point mapped to infinity gets an infinite or NaN
+            distance, so it never counts as an inlier.
+        """
+        src = np.vstack((match_p_src, np.ones(match_p_src.shape[1])))
+        mapped = homography @ src
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mapped = mapped[:2] / mapped[2]
+        return np.linalg.norm(mapped - match_p_dst, axis=0)
 
     @staticmethod
     def meet_the_model_points(homography: np.ndarray,
@@ -196,9 +227,13 @@ class Solution:
             The second entry is the matching points form the destination
             image (shape 2xD; D as above).
         """
-        # return mp_src_meets_model, mp_dst_meets_model
-        """INSERT YOUR CODE HERE"""
-        pass
+        distances = Solution._compute_distances(homography, match_p_src,
+                                                match_p_dst)
+        # The same inlier rule as test_homography: distance below max_err.
+        inliers = distances < max_err
+        mp_src_meets_model = match_p_src[:, inliers]
+        mp_dst_meets_model = match_p_dst[:, inliers]
+        return mp_src_meets_model, mp_dst_meets_model
 
     def compute_homography(self,
                            match_p_src: np.ndarray,
@@ -218,21 +253,48 @@ class Solution:
         Returns:
             homography: Projective transformation matrix from src to dst.
         """
-        # # use class notations:
-        # w = inliers_percent
-        # # t = max_err
-        # # p = parameter determining the probability of the algorithm to
-        # # succeed
-        # p = 0.99
-        # # the minimal probability of points which meets with the model
-        # d = 0.5
-        # # number of points sufficient to compute the model
-        # n = 4
-        # # number of RANSAC iterations (+1 to avoid the case where w=1)
-        # k = int(np.ceil(np.log(1 - p) / np.log(1 - w ** n))) + 1
-        # return homography
-        """INSERT YOUR CODE HERE"""
-        pass
+        # use class notations:
+        w = inliers_percent
+        t = max_err
+        # p = parameter determining the probability of the algorithm to
+        # succeed
+        p = 0.99
+        # the minimal probability of points which meets with the model
+        d = 0.5
+        # number of points sufficient to compute the model
+        n = 4
+        # number of RANSAC iterations (+1 to avoid the case where w=1)
+        with np.errstate(divide='ignore'):  # w = 1 gives log(0) = -inf
+            k = int(np.ceil(np.log(1 - p) / np.log(1 - w ** n))) + 1
+
+        num_points = match_p_src.shape[1]
+        homography = None
+        prev_err = np.inf
+        largest_src = largest_dst = None  # the largest consensus set seen
+        for _ in range(k):
+            # 1. Fit a model to n randomly chosen matches.
+            idx = sample(range(num_points), n)
+            model = self.compute_homography_naive(match_p_src[:, idx],
+                                                  match_p_dst[:, idx])
+            # 2. Its inliers are the matches closer than t to the model.
+            src_in, dst_in = self.meet_the_model_points(
+                model, match_p_src, match_p_dst, t)
+            if largest_src is None or src_in.shape[1] > largest_src.shape[1]:
+                largest_src, largest_dst = src_in, dst_in
+            # 3. If more than d of the points meet the model, refit it on all
+            # of its inliers and keep it if its error is the lowest so far.
+            if src_in.shape[1] / num_points > d:
+                model = self.compute_homography_naive(src_in, dst_in)
+                _, err = self.test_homography(model, match_p_src,
+                                              match_p_dst, t)
+                if err < prev_err:
+                    homography, prev_err = model, err
+        if homography is None:
+            # No sample reached d inliers in k iterations: fall back to the
+            # refit on the largest consensus set found.
+            homography = self.compute_homography_naive(largest_src,
+                                                       largest_dst)
+        return homography
 
     @staticmethod
     def compute_backward_mapping(
