@@ -13,7 +13,7 @@ from ex1_student_solution import Solution
 # Don't forget to fill in your IDs!!!
 # students' IDs:
 ID1 = '123456789'
-ID2 = '987654321'
+ID2 = '212609440'
 ##########################################################
 
 
@@ -235,4 +235,4 @@ def your_images_main():
 if __name__ == '__main__':
     main()
     # Enable for part C!
-    # your_images_main()
+    your_images_main()
