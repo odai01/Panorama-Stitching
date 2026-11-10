@@ -321,10 +321,75 @@ class Solution:
         Returns:
             The source image backward warped to the destination coordinates.
         """
+        src_h, src_w = src_image.shape[:2]
+        dst_h, dst_w = dst_image_shape[:2]
 
-        # return backward_warp
-        """INSERT YOUR CODE HERE"""
-        pass
+        # 1. Generate coordinates of all destination pixels.
+        dst_x, dst_y = np.meshgrid(
+            np.arange(dst_w), np.arange(dst_h)
+        )
+
+        dst_points = np.vstack((
+            dst_x.ravel(),
+            dst_y.ravel(),
+            np.ones(dst_h * dst_w)
+        ))
+
+        # 2. Map destination coordinates back to the source.
+        src_points = backward_projective_homography @ dst_points
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            x = src_points[0] / src_points[2]
+            y = src_points[1] / src_points[2]
+
+        # 3. Keep only coordinates inside the source image.
+        valid = (
+            np.isfinite(x) & np.isfinite(y) &
+            (x >= 0) & (x <= src_w - 1) &
+            (y >= 0) & (y <= src_h - 1)
+        )
+
+        x_valid = x[valid]
+        y_valid = y[valid]
+
+        # 4. Find the four neighboring pixels.
+        x0 = np.floor(x_valid).astype(int)
+        y0 = np.floor(y_valid).astype(int)
+        x1 = np.minimum(x0 + 1, src_w - 1)
+        y1 = np.minimum(y0 + 1, src_h - 1)
+
+        # Fractional distances from the top-left neighbor.
+        dx = x_valid - x0
+        dy = y_valid - y0
+
+        # 5. Bilinear interpolation of the RGB values.
+        top_left = src_image[y0, x0].astype(float)
+        top_right = src_image[y0, x1].astype(float)
+        bottom_left = src_image[y1, x0].astype(float)
+        bottom_right = src_image[y1, x1].astype(float)
+
+        dx = dx[:, None]
+        dy = dy[:, None]
+
+        colors = (
+            (1 - dx) * (1 - dy) * top_left +
+            dx * (1 - dy) * top_right +
+            (1 - dx) * dy * bottom_left +
+            dx * dy * bottom_right
+        )
+
+        # 6. Place interpolated colors into the destination image.
+        output = np.zeros(
+            (dst_h * dst_w, src_image.shape[2]), dtype=float
+        )
+        output[valid] = colors
+
+        output = output.reshape(dst_image_shape)
+
+        if np.issubdtype(src_image.dtype, np.integer):
+            output = np.clip(output, 0, 255)
+
+        return output.astype(src_image.dtype)
 
     @staticmethod
     def find_panorama_shape(src_image: np.ndarray,
@@ -414,9 +479,19 @@ class Solution:
             A new homography which includes the backward homography and the
             translation.
         """
-        # return final_homography
-        """INSERT YOUR CODE HERE"""
-        pass
+        translation = np.array([
+            [1, 0, -pad_left],
+            [0, 1, -pad_up],
+            [0, 0, 1]
+        ], dtype=float)
+
+        final_homography = backward_homography @ translation
+
+        # Normalize the homography scale.
+        if not np.isclose(final_homography[2, 2], 0):
+            final_homography /= final_homography[2, 2]
+
+        return final_homography
 
     def panorama(self,
                  src_image: np.ndarray,
@@ -457,6 +532,55 @@ class Solution:
             A panorama image.
 
         """
-        # return np.clip(img_panorama, 0, 255).astype(np.uint8)
-        """INSERT YOUR CODE HERE"""
-        pass
+        # 1. Estimate the forward homography using RANSAC.
+        forward_homography = self.compute_homography(
+            match_p_src, match_p_dst, inliers_percent, max_err
+        )
+
+        # 2. Determine the panorama size and required padding.
+        pan_h, pan_w, padding = self.find_panorama_shape(
+            src_image, dst_image, forward_homography
+        )
+        print("Source shape:", src_image.shape)
+        print("Destination shape:", dst_image.shape)
+        print("Panorama shape:", pan_h, pan_w)
+        print("Padding:", padding)
+        # 3. Invert the homography (panorama/destination -> source).
+        backward_homography = np.linalg.inv(forward_homography)
+
+        # 4. Account for the panorama's coordinate offset.
+        translated_homography = self.add_translation_to_backward_homography(
+            backward_homography,
+            padding.pad_left,
+            padding.pad_up
+        )
+
+        # 5. Warp the source image onto the full panorama canvas.
+        warped_source = self.compute_backward_mapping(
+            translated_homography,
+            src_image,
+            (pan_h, pan_w, src_image.shape[2])
+        )
+
+        # 6. Create the panorama canvas and place the destination image.
+        img_panorama = np.zeros(
+            (pan_h, pan_w, dst_image.shape[2]), dtype=np.float64
+        )
+
+        dst_h, dst_w = dst_image.shape[:2]
+        top = padding.pad_up
+        left = padding.pad_left
+
+        img_panorama[top:top + dst_h, left:left + dst_w] = dst_image
+
+        # 7. Fill only pixels not occupied by the destination image.
+        destination_mask = np.zeros((pan_h, pan_w), dtype=bool)
+        destination_mask[
+            top:top + dst_h,
+            left:left + dst_w
+        ] = True
+
+        img_panorama[~destination_mask] = warped_source[~destination_mask]
+
+        # 8. Return the completed panorama.
+        return np.clip(img_panorama, 0, 255).astype(np.uint8)
