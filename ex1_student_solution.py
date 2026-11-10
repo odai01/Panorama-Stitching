@@ -541,10 +541,6 @@ class Solution:
         pan_h, pan_w, padding = self.find_panorama_shape(
             src_image, dst_image, forward_homography
         )
-        print("Source shape:", src_image.shape)
-        print("Destination shape:", dst_image.shape)
-        print("Panorama shape:", pan_h, pan_w)
-        print("Padding:", padding)
         # 3. Invert the homography (panorama/destination -> source).
         backward_homography = np.linalg.inv(forward_homography)
 
